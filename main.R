@@ -2,6 +2,7 @@ library(scRNAseq)
 library(AnnotationHub)
 library(scater)
 library(scran)
+library(limma)
 
 ##Loading in the data
 
@@ -73,3 +74,45 @@ sce.416b <- computeSumFactors(sce.416b)
 sce.416b <- logNormCounts(sce.416b)
 
 summary(sizeFactors(sce.416b))
+
+#plotting deconvolution factor vs library size factor
+plot(librarySizeFactors(sce.416b), sizeFactors(sce.416b), pch = 16, 
+     xlab = "Library size factors", ylab = "Deconvolution factors", 
+     col = c("black", "red")[grepl("induced", sce.416b$phenotype)+1],
+     log="xy")
+
+##Variance modelling. - block on the plate of origin to minimize plate effects
+dec.416b <- modelGeneVarWithSpikes(sce.416b, "ERCC", block=sce.416b$block)
+#Take the top 10% of genes with the largest biological component (variance)
+chosen.hvgs <- getTopHVGs(dec.416b, prop = 0.1)
+
+
+par(mfrow=c(1,2))
+blocked.stats <- dec.416b$per.block
+for (i in colnames(blocked.stats)) {
+  current <- blocked.stats[[i]]
+  plot(current$mean, current$total, main=i, pch = 16, cex=0.5,
+       xlab = "Mean of log-expression", ylab = "Variance of log-expression")
+  curfit <- metadata(current)
+  points(curfit$mean, curfit$var, col = "red", pch=16)
+  curve(curfit$trend(x), col = "dodgerblue", add=TRUE, lwd=2)
+}
+
+
+##Batch correction
+#Composition of cells is expected to be the same across the two plates, hence the use of removeBatchEffect() rather than more complex methods
+assay(sce.416b, "corrected") <- removeBatchEffect(logcounts(sce.416b), design = model.matrix(~sce.416b$phenotype), batch = sce.416b$block)
+
+
+##Dimensionality reduction
+
+#We do not expect a great deal of heterogeneity in this dataset, so we only request 10 PCs. 
+#We use an exact SVD to avoid warnings from irlba about handling small datasets.
+sce.416b <- runPCA(sce.416b, ncomponents = 10, subset_row = chosen.hvgs,
+                   exprs_values="corrected", BSPARAM=BiocSingular::ExactParam())
+
+set.seed(1010)
+sce.416b <- runTSNE(sce.416b, dimred="PCA", perplexity = 10)
+
+
+##Clustering
