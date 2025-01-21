@@ -3,7 +3,8 @@ library(AnnotationHub)
 library(scater)
 library(scran)
 library(limma)
-
+library(dynamicTreeCut)
+library(cluster)
 ##Loading in the data
 
 #Loading in the SingleCellExperiment object
@@ -116,3 +117,30 @@ sce.416b <- runTSNE(sce.416b, dimred="PCA", perplexity = 10)
 
 
 ##Clustering
+my.dist <- dist(reducedDim(sce.416b, "PCA"))
+my.tree <- hclust(my.dist, method = "ward.D2")
+#do I need to use unname() ?
+my.cluster <- cutreeDynamic(my.tree, distM = as.matrix(my.dist), minClusterSize = 10, verbose = 0)
+colLabels(sce.416b) <- factor(my.cluster)
+
+table(Cluster=colLabels(sce.416b), Plate=sce.416b$block)
+
+table(Cluster=colLabels(sce.416b), Oncogene=sce.416b$phenotype)
+
+#tSNE plot
+plotTSNE(sce.416b, colour_by="label")
+
+#Silhouette width
+sil <- silhouette(my.cluster, dist = my.dist)
+plot(sil, main=paste(length(unique(my.cluster)), "cluster"))
+
+
+##Interpretation
+markers <- findMarkers(sce.416b, my.cluster, block = sce.416b$block)
+marker.set <- markers[["1"]]
+head(marker.set, 10)
+
+
+top.markers <- rownames(marker.set)[marker.set$Top <= 10]
+plotHeatmap(sce.416b, features = top.markers, order_columns_by = "label", colour_columns_by = c("label", "block", "phenotype"),
+            center=TRUE, symmetric=TRUE, zlim = c(-5,5))
